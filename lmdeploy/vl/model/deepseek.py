@@ -5,9 +5,11 @@ from typing import List
 
 import torch
 from PIL.Image import Image
+from transformers import AutoModelForCausalLM
 
 from lmdeploy.vl.model.base import VisonModel
-from lmdeploy.vl.model.utils import load_model_from_weight_files
+from lmdeploy.vl.model.utils import (buffers_aware_empty,
+                                     load_model_from_weight_files)
 
 
 def check_deepseek_vl_install():
@@ -24,7 +26,8 @@ def check_deepseek_vl_install():
 class DeepSeekVisionModel(VisonModel):
     """Qwen vision model."""
 
-    def __init__(self, model_path, device='cuda:0'):
+    def __init__(self, model_path, device='cuda:0', with_llm: bool = False):
+        self.with_llm = with_llm
         self.model_path = model_path
         self.device = device
         self.build_model()
@@ -34,15 +37,17 @@ class DeepSeekVisionModel(VisonModel):
         # empty init
         from accelerate import init_empty_weights
         from deepseek_vl.models import VLChatProcessor
-        from transformers import AutoModelForCausalLM
         with init_empty_weights():
             warnings.simplefilter('ignore')
-            model = AutoModelForCausalLM.from_pretrained(self.model_path)
-            del model.language_model
+            model = AutoModelForCausalLM.from_pretrained(
+                self.model_path, trust_remote_code=True)
+            if not self.with_llm:
+                del model.language_model
+            else:
+                self.vl_model = model
         # load weight
-        model.to_empty(device='cpu')
+        buffers_aware_empty(model, 'cpu')
         load_model_from_weight_files(model, self.model_path)
-
         self.vision_model = model.vision_model
         self.aligner = model.aligner
         self.vision_model.eval().half().to(self.device)
